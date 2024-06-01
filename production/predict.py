@@ -1,12 +1,11 @@
-import time
 import json
-from pathlib import Path
 from argparse import ArgumentParser
+from pathlib import Path
 
-import tqdm
 import more_itertools
 import numpy as np
 import onnxruntime as ort
+import tqdm
 import transformers
 
 print(ort.get_device())
@@ -45,33 +44,47 @@ class Predictor:
         attention_mask = np.array([x['attention_mask'] for x in tokens], dtype=np.int32)
         ort_inputs = dict(input_ids=input_ids, attention_mask=attention_mask)
         ort_outs = self._model.run(self.get_output_names(), ort_inputs)
-        return ort_outs[0]
+        return ort_outs[0], ort_outs[1]
 
     def __call__(self, texts):
         confs = []
-        for batch in more_itertools.chunked(texts, self._batch_size):
-            outputs = self.forward(batch)
-            confs.extend(outputs)
-        labels = [bool(conf > 0.5) for conf in confs]
-        return labels
+        model_ids = []
+        chunks = list(more_itertools.chunked(texts, self._batch_size))
+        for batch in tqdm.tqdm(chunks):
+            conf, model_idx = self.forward(batch)
+            confs.extend(conf)
+            model_ids.extend(np.argmax(model_idx, axis=1))
+        ai_labels = [float(conf) > 0.5 for conf in confs]
+        return ai_labels, model_ids
 
 
-def load_test_data():
-    with open('resources/test_data_2.json', 'r') as f:
+def load_test_data(sample_filepath: str):
+    with open(sample_filepath, 'r') as f:
         data = json.load(f)
-        texts = data['data']
-    return texts
+        texts = data['texts']
+        labels = data['labels']
+    return texts, labels
+
+
+def run(predictor, sample_filepath):
+    texts, labels = load_test_data(sample_filepath)
+    pred_labels = predictor(texts)
+    count = np.sum(np.array(labels) == pred_labels)
+    total = len(labels)
+    return count, total
 
 
 def main(args):
     predictor = Predictor(args.onnx_model, args.tokenizer, args.batch_size)
 
-    texts = load_test_data()
-    t1 = time.time()
-    labels = predictor(texts)
-    print(labels)
-    t2 = time.time()
-    print(f"Time: {t2 - t1:.2f} s")
+    texts, gt_labels, gt_model_ids = load_data()
+    pred_ai_labels, pred_model_ids = predictor(texts)
+
+    accuracy = 100 * np.sum(np.array(gt_labels) == pred_ai_labels) / len(gt_labels)
+    print(f'Accuracy ai: {accuracy:.2f}%')
+
+    model_accuracy = 100 * np.sum(np.array(gt_model_ids) == pred_model_ids) / len(gt_model_ids)
+    print(f'Accuracy model name: {model_accuracy:.2f}%')
 
 
 if __name__ == '__main__':
