@@ -54,7 +54,7 @@ class Predictor:
             conf, model_idx = self.forward(batch)
             confs.extend(conf)
             model_ids.extend(np.argmax(model_idx, axis=1))
-        ai_labels = [float(conf) > 0.5 for conf in confs]
+        ai_labels = [float(conf) for conf in confs]
         return ai_labels, model_ids
 
 
